@@ -20,22 +20,31 @@ both a classical Random Forest baseline and a Graph Convolutional Network.
 | Model | RMSE | MAE | R² | Pearson | Spearman |
 |---|---|---|---|---|---|
 | Random Forest (baseline) | 0.929 | 0.711 | 0.613 | 0.792 | 0.761 |
-| GCN | ~1.45 | ~1.21 | ~0.05 | ~0.29 | ~0.25 |
+| GCN (seed 42) | 1.378 | 1.122 | 0.148 | 0.402 | 0.383 |
 
 The Random Forest substantially outperforms the GCN on this dataset. 
 This is consistent with literature showing classical fingerprint-based 
 models remain competitive on small molecular datasets under scaffold 
 split conditions, where structural diversity between train and test sets 
-is high. GCN results vary across runs due to random initialization; 
-reported values are representative single-run results.
+is high. GCN results vary with random initialization; across seeds 0, 1 and 42 the
+GCN reached R² 0.12–0.15 and Pearson 0.39–0.40, so the gap to the Random
+Forest is consistent rather than an artifact of one run.
+
+**Bug fix (Sep 2026):** an earlier version of the training loop updated the
+best validation loss before checking whether to reset the early-stopping
+counter, so the counter never reset and training always stopped at epoch 15.
+With the fix, training runs until validation loss stops improving (epoch
+44–54 depending on seed), and GCN R² rose from ~0.05 to ~0.15. The Random
+Forest result is unaffected.
 
 ## Limitations and Future Work
 
 - GCN performance is limited by dataset size and scaffold split difficulty.
   Larger datasets or transfer learning from pretrained molecular encoders 
   (e.g. ChemBERTa, GIN pretrained on ZINC) would likely improve results.
-- Results represent single-run performance. Multi-seed averaging would 
-  give more reliable estimates.
+- The Random Forest is reported for one seed; GCN results were checked
+  across three seeds. More seeds and confidence intervals would give more
+  reliable estimates.
 - Additional baselines (XGBoost, SVM with RBF kernel) would strengthen 
   the comparison.
 - Atom features are minimal; incorporating partial charges, 3D coordinates, 
@@ -61,3 +70,6 @@ egfr_project/
 conda activate egfr-env
 python3 main.py
 ```
+
+If `data/egfr_pic50.csv` exists, the script uses it instead of re-downloading
+from ChEMBL. Delete it to fetch fresh data.

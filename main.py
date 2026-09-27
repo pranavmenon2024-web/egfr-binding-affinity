@@ -42,7 +42,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from chembl_webresource_client.new_client import new_client
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit.Chem import rdMolDescriptors
@@ -58,6 +57,8 @@ from torch_geometric.nn import GCNConv, global_mean_pool
 
 def fetch_egfr_data(limit: int = 5000) -> pd.DataFrame:
     """Fetch EGFR IC50 data from ChEMBL and remove duplicates."""
+    # Imported here because the client contacts ChEMBL on import.
+    from chembl_webresource_client.new_client import new_client
     activity = new_client.activity
     res = activity.filter(
         target_chembl_id="CHEMBL203",
@@ -278,12 +279,19 @@ def plot_predictions(y_true: List[float], y_pred: List[float], title: str, out_p
 
 
 def main() -> None:
+    torch.manual_seed(42)
+    np.random.seed(42)
     os.makedirs("data", exist_ok=True)
     os.makedirs("outputs", exist_ok=True)
 
-    print("Fetching EGFR data from ChEMBL...")
-    df = fetch_egfr_data(limit=5000)
-    print(f"Fetched {len(df)} raw rows")
+    cache_path = os.path.join("data", "egfr_pic50.csv")
+    if os.path.exists(cache_path):
+        print(f"Loading cached dataset from {cache_path}")
+        df = pd.read_csv(cache_path)[["chembl_id", "smiles", "ic50_nM"]]
+    else:
+        print("Fetching EGFR data from ChEMBL...")
+        df = fetch_egfr_data(limit=5000)
+        print(f"Fetched {len(df)} raw rows")
 
     df["mol"] = df["smiles"].apply(Chem.MolFromSmiles)
     df = df[df["mol"].notnull()].copy()
@@ -377,9 +385,15 @@ def main() -> None:
     for epoch in range(1, 101):
         train_loss = train_one_epoch(model, train_loader, optimizer, device)
         val_metrics, _, _ = evaluate(model, val_loader, device)
+        # Checkpoint on improvement and reset patience in the same branch.
+        # (Previously the reset was checked after best_val_mse was updated, so
+        # it never fired and training always stopped at epoch PATIENCE.)
         if val_metrics["mse"] < best_val_mse:
             best_val_mse = val_metrics["mse"]
             torch.save(model.state_dict(), best_model_path)
+            patience_counter = 0
+        else:
+            patience_counter += 1
         print(
             f"Epoch {epoch:02d} | Train MSE: {train_loss:.4f} | "
             f"Val RMSE: {val_metrics['rmse']:.4f} | "
@@ -389,13 +403,9 @@ def main() -> None:
             f"Val Spearman: {val_metrics['spearman']:.4f}"
         )
         scheduler.step(val_metrics["mse"])
-        if val_metrics["mse"] < best_val_mse:
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if patience_counter >= PATIENCE:
-                print(f"Early stopping triggered at epoch {epoch}")
-                break
+        if patience_counter >= PATIENCE:
+            print(f"Early stopping triggered at epoch {epoch}")
+            break
 
     # Load best model and evaluate on test set
     model.load_state_dict(torch.load(best_model_path, map_location=device))
